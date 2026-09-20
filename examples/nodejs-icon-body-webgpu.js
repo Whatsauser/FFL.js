@@ -2,7 +2,6 @@
  * @file Sample CLI tool for rendering a Mii icon with body
  * headlessly using Node.js and THREE.WebGPURenderer.
  * Before running, install: npm install webgpu three
- * Last tested with: Node.js 25, three@0.184.0, webgpu@0.6.1
  *
  * Currently, this requires acquiring body models yourself.
  * Search "BodyPath" to see where to get them and replace their paths.
@@ -12,7 +11,9 @@
 
 // Specific to this example.
 import * as fs from 'node:fs/promises';
-import { parseArgs } from 'node:util';
+import path from 'path';
+import { mkdir } from 'node:fs/promises';
+import sharp from 'sharp';
 import * as THREE from 'three/webgpu'; // THREE.*, WebGPURenderer
 // Dependencies for body scaling.
 import { GLTFLoader, SkeletonUtils } from 'three/examples/jsm/Addons.js';
@@ -27,6 +28,7 @@ import {
 	getFaceCamera, getWholeBodyCamera
 } from '../helpers/BodyUtilities.js';
 // Standard non-Node dependencies:
+import { PNG } from 'pngjs';
 import {
 	FFL, CharModel, PantsColor,
 	pantsColors, FFLExpression
@@ -34,6 +36,26 @@ import {
 import FFLShaderNodeMaterial from '../materials/FFLShaderNodeMaterial.js';
 import ModuleFFL from './ffl-emscripten-single-file.cjs';
 /* globals process Buffer -- Node.js */
+// polyfill.js
+import { create, globals } from 'webgpu';
+
+// Copy the WebGPU interfaces into global scope
+Object.assign(globalThis, globals);
+
+// Safely define or extend the navigator object
+if (!globalThis.navigator) {
+	Object.defineProperty(globalThis, 'navigator', {
+		value: { userAgent: 'node' },
+		writable: true,
+		configurable: true
+	});
+}
+
+Object.defineProperty(globalThis.navigator, 'gpu', {
+	value: create([]),
+	writable: true,
+	configurable: true
+});
 
 // Imports for standalone JSDoc types.
 /**
@@ -66,8 +88,8 @@ function parseHexOrBase64ToBytes(text) {
 // TODO: We should have a script to generate these from the original files.
 // Until then, these need to be acquired and placed manually.
 // Models from Mii Creator may work, or from here: https://github.com/ariankordi/ffl-raylib-samples/tree/master/models
-const maleBodyPath = './miibodymiddle male test.glb';
-const femaleBodyPath = './miibodymiddle female test.glb';
+const maleBodyPath = path.resolve('./miibodymiddle male test.glb');
+const femaleBodyPath = path.resolve('./miibodymiddle female test.glb');
 
 const pantsColorDefault = pantsColors[PantsColor.RedRegular].clone().convertLinearToSRGB();
 
@@ -165,7 +187,7 @@ function loadBodyModel(gender) {
  * @param {IconRenderRequest} request - Parameters for rendering the icon.
  * @returns {Promise<Uint8Array>} Rendered image as image file data.
  */
-async function renderRequestToImage(renderer, ffl, matClass, request) {
+async function renderRequestToImage(renderer, ffl, matClass, request, format, size, name, expression, mii_data) {
 	const scene = new THREE.Scene();
 	// Scene should have a transparent background.
 	// Usually, it's transparent white (FFFFFF00) - then colored glasses
@@ -179,8 +201,8 @@ async function renderRequestToImage(renderer, ffl, matClass, request) {
 		charModel = new CharModel(ffl, request.data,
 			request.expression, matClass, renderer);
 
-		// TODO: In certain instances (e.g., with Guest A), nose and
-		// forehead disappear due to frustum culling. This is probably
+		// TODO: In certain instances (charline), nose and forehead
+		// may disappear due to frustum culling. This is probably
 		// from mask/glass not being properly marked transparent?
 		// For now, disable frustumCulled on every head mesh.
 		charModel.meshes.traverse((m) => {
@@ -218,19 +240,84 @@ async function renderRequestToImage(renderer, ffl, matClass, request) {
 		});
 		renderer.setRenderTarget(rt); // Set new target.
 		// rt.viewport = new THREE.Vector4(0, 0, 200, 200);
-
+		renderer.setClearColor(0x000000, 0); 
 		renderer.render(scene, camera);
-
-		// Read the pixels out and encode to an image file.
 		const pixels = await renderer.readRenderTargetPixelsAsync(rt, 0, 0, rt.width, rt.height);
-		// console.debug('pixel size:', pixels.length, ', sqrt:', Math.sqrt(pixels.length / 4))
+		// NObody likes bmp
+let imageData; 
+const srcWidth = Math.ceil(rt.width / 64) * 64;
+const srcHeight = Math.ceil(rt.height / 64) * 64;
+const storageDir = path.resolve(import.meta.dirname, '../src/storage/miis');
+const filePath = path.join(storageDir, `${name}-${mii_data}`, String(expression), `icon-${size}.${format}`);
+const folderPath = path.dirname(filePath);
+await mkdir(folderPath, { recursive: true });
 
-		const imageData = encodeBmpImage(
-			rt.width, rt.height,
-			/** @type {Uint8Array} */ (pixels)
-		);
+if (format === 'png') {
+    imageData = await sharp(Buffer.from(pixels), {
+        raw: {
+            width: srcWidth,
+            height: srcHeight,
+            channels: 4
+        }
+    })
+    .resize(size, size, { fit: 'fill' })
+    .png()
+    .toBuffer();
 
-		return imageData;
+    await fs.writeFile(filePath, imageData);
+} else if (format === 'jpeg' || format === 'jpg') {
+    imageData = await sharp(Buffer.from(pixels), {
+        raw: {
+            width: srcWidth,
+            height: srcHeight,
+            channels: 4
+        }
+    })
+    .resize(size, size, { fit: 'fill' })
+    .flatten({ background: { r: 255, g: 255, b: 255 } })
+    .jpeg({ quality: 90, mozjpeg: true })
+    .toBuffer();
+
+    await fs.writeFile(filePath, imageData);
+} else if (format === 'tga') {
+    const resizedRawPixels = await sharp(Buffer.from(pixels), {
+        raw: {
+            width: srcWidth,
+            height: srcHeight,
+            channels: 4
+        }
+    })
+    .resize(size, size, { fit: 'fill' })
+    .raw()
+    .toBuffer();
+
+    const mutablePixels = Buffer.from(resizedRawPixels);
+    const tgaHeader = Buffer.alloc(18);
+    tgaHeader.writeUInt8(0, 0);       
+    tgaHeader.writeUInt8(0, 1);       
+    tgaHeader.writeUInt8(2, 2); 
+    tgaHeader.writeUInt16LE(size, 12);
+    tgaHeader.writeUInt16LE(size, 14);
+    tgaHeader.writeUInt8(32, 16);
+    tgaHeader.writeUInt8(40, 17); 
+
+    for (let i = 0; i < mutablePixels.length; i += 4) {
+        const r = mutablePixels[i];
+        const b = mutablePixels[i + 2];
+        mutablePixels[i] = b;     
+        mutablePixels[i + 2] = r; 
+    }
+
+    imageData = Buffer.concat([tgaHeader, mutablePixels]);
+    await fs.writeFile(filePath, imageData);
+} else {
+	    const png = new PNG({ width: rt.width, height: rt.height });
+    png.data = Buffer.from(pixels.buffer);
+    imageData = PNG.sync.write(png); 
+}
+
+return imageData;
+
 	} finally {
 		charModel && charModel.dispose(); // Mii model
 		if (body) {
@@ -245,57 +332,33 @@ async function renderRequestToImage(renderer, ffl, matClass, request) {
 // // ---------------------------------------------------------------------
 
 /** Entrypoint */
-async function main() {
-	// Parse CLI arguments.
-	const { values, positionals } = parseArgs({
-		options: {
-			resource: { type: 'string', short: 'r' },
-			width: { type: 'string', short: 'w', default: '256' },
-			type: { type: 'string', short: 't', default: 'face' },
-			expression: { type: 'string', short: 'e', default: '0' },
-			outPrefix: { type: 'string', short: 'o', default: 'output-' }
-		},
-		allowPositionals: true
-	});
+async function main( mii_data, type, expression, format, size, name) {
 
-	if (!values.resource || positionals.length === 0) {
-		console.error(`
-Usage:
-  node ${process.argv[1]} --resource <resourceFile> [--width 256] [--type face|all_body] [--expression 0-18] <mii1> <mii2> ...
 
-Mii data is accepted as Base64 or hex. Supported: Wii U/3DS (FFSD), Wii (RCD/RSD), Mii Studio code/URL data
-Example:
-  node ${process.argv[1]} --resource ../AFLResHigh_2_3.dat --type face --expression 0 \\
-    000d142a303f434b717a7b84939ba6b2bbbec5cbc9d0e2ea010d15252b3250535960736f726870757f8289a0a7aeb1
-`);
-		process.exit(1);
-	}
 
-	const resourcePath = values.resource;
-	const width = Number.parseInt(values.width, 10);
+
+	const width = Number.parseInt('512', 10);
 	// const height = width;
-	const isAllBody = values.type === 'all_body';
-	// Only all_body and face are supported now. Default is face.
-	const expression = Number.parseInt(values.expression, 10);
-	const outPrefix = values.outPrefix;
-	const charDataArray = positionals;
+	const isAllBody = type === 'all_body';
+
+    
 
 	// Validate inputs. Mii data is validated by rendering functions.
 	if (Number.isNaN(width) || width <= 0) {
 		console.error('Width must be a positive integer.');
-		process.exit(1);
+		return false
 	}
 
 	if (width % 64 !== 0) {
 		console.error('The resolution needs to be a multiple of 64. If it\'s not, the pixels will have this weird padding applied that doesn\'t play nice with image encoders. Examples: 128, 192, 256');
-		process.exit(1);
+		return false
 	}
 
 	if (Number.isNaN(expression) || expression < 0 || expression >= FFLExpression.MAX) {
 		console.error(`Expression must be in range: 0-${FFLExpression.MAX - 1}.`);
-		process.exit(1);
+		return false
 	}
-	const resourceFile = fs.readFile(resourcePath);
+	const resourceFile = await fs.readFile('./FFLResHigh.dat');
 
 	addSkeletonScalingExtensions(THREE.Skeleton);
 	addWebGPUExtensions(); // Add WebGPU extensions needed for Node.js.
@@ -319,24 +382,21 @@ Example:
 
 	try {
 		// Initialize FFL, which loads resource into memory.
-		ffl = await FFL.initWithResource(await resourceFile, ModuleFFL);
+		ffl = await FFL.initWithResource(resourceFile, ModuleFFL);
 		ffl.setRenderer(renderer); // Tell FFL.js we are WebGPU
 
 		// Go through all Mii data inputs.
-		for (const dataString of charDataArray) {
-			// Add a timestamp by ms at the end of the filename.
-			const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, '');
-			const outFile = `${outPrefix}${timestamp}.bmp`;
 
-			console.info(`Rendering: ${outFile}`);
+
+			console.info(`Rendering Mii`);
 			/** @type {IconRenderRequest} */ const request = {
-				data: parseHexOrBase64ToBytes(dataString),
+				data: parseHexOrBase64ToBytes(mii_data),
 				width, isAllBody, expression
 			};
-			// Create the icon render and write it to its file output.
-			const imageData = await renderRequestToImage(renderer, ffl, matClass, request);
-			await fs.writeFile(outFile, imageData);
-		}
+			let imageData = await renderRequestToImage(renderer, ffl, matClass, request, format, size, name, expression, mii_data);
+
+			return imageData
+		
 	} finally {
 		// Clean up.
 		(ffl) && ffl.dispose(); // Free FFL resource from WASM heap.
@@ -352,4 +412,5 @@ Example:
 }
 
 // eslint-disable-next-line unicorn/prefer-top-level-await -- needs lib = es2017
-main();
+export {main}
+export default {main}
