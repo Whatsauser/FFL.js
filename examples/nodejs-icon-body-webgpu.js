@@ -56,6 +56,10 @@ Object.defineProperty(globalThis.navigator, 'gpu', {
 	writable: true,
 	configurable: true
 });
+if (typeof globalThis.requestAnimationFrame === 'undefined') {
+    globalThis.requestAnimationFrame = (callback) => setTimeout(callback, 1000 / 60);
+    globalThis.cancelAnimationFrame = (requestId) => clearTimeout(requestId);
+}
 
 // Imports for standalone JSDoc types.
 /**
