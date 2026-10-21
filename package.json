@@ -1,5 +1,5 @@
 {
-  "name": "ffl.js",
+  "name": "FFL.js",
   "version": "2.2.2",
   "main": "ffl.js",
   "types": "./dist/ffl.d.ts",
