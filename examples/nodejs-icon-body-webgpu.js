@@ -251,7 +251,7 @@ async function renderRequestToImage(renderer, ffl, matClass, request, format, si
 let imageData; 
 const srcWidth = Math.ceil(rt.width / 64) * 64;
 const srcHeight = Math.ceil(rt.height / 64) * 64;
-const storageDir = path.resolve(import.meta.dirname, '../src/storage/miis');
+const storageDir = path.resolve(import.meta.dirname, './src/storage/miis');
 const filePath = path.join(storageDir, `${name}-${mii_data}`, String(expression), `icon-${size}.${format}`);
 const folderPath = path.dirname(filePath);
 await mkdir(folderPath, { recursive: true });
