@@ -233,6 +233,7 @@ async function renderRequestToImage(renderer, ffl, matClass, request, format, si
 			camera = getWholeBodyCamera(1, charModel.charInfo.height);
 		} else { // Face only render.
 			camera = getFaceCamera();
+			camera.position.multiplyScalar((1 / 7) / 0.14);
 			adjustCameraForBodyHead(camera, body);
 		}
 
