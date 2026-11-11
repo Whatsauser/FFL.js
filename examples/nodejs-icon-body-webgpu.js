@@ -57,8 +57,8 @@ Object.defineProperty(globalThis.navigator, 'gpu', {
 	configurable: true
 });
 if (typeof globalThis.requestAnimationFrame === 'undefined') {
-    globalThis.requestAnimationFrame = (callback) => setTimeout(callback, 1000 / 60);
-    globalThis.cancelAnimationFrame = (requestId) => clearTimeout(requestId);
+	globalThis.requestAnimationFrame = (callback) => setTimeout(callback, 1000 / 60);
+	globalThis.cancelAnimationFrame = (requestId) => clearTimeout(requestId);
 }
 
 // Imports for standalone JSDoc types.
@@ -96,6 +96,18 @@ const maleBodyPath = path.resolve('./miibodymiddle male test.glb');
 const femaleBodyPath = path.resolve('./miibodymiddle female test.glb');
 
 const pantsColorDefault = pantsColors[PantsColor.RedRegular].clone().convertLinearToSRGB();
+
+const bindPoseRotations = {
+	arm_l1: [0.226922, -0.048498, -0.549661, 0.802513],
+	arm_r1: [0.226674, 0.048864, 0.549772, 0.802485],
+	elbow_l: [0, 0, 0, 1],
+	elbow_r: [0, 0, 0, 1],
+	shoulder_l: [0, 0, 0, 1],
+	shoulder_r: [0, 0, 0, 1],
+	knee_l: [0, 0, 0, 1],
+	knee_r: [0, 0, 0, 1]
+};
+
 
 /** @typedef {import('three/examples/jsm/loaders/GLTFLoader.js').GLTF} GLTF */
 /**
@@ -217,12 +229,19 @@ async function renderRequestToImage(renderer, ffl, matClass, request, format, si
 		const bodyMdl = body.model;
 
 		body.mixer.update(0); // Set animation to 0th frame.
+		for (const [boneName, q] of Object.entries(bindPoseRotations)) {
+			const bone = bodyMdl.getObjectByName(boneName);
+			if (bone) {
+				bone.quaternion.set(q[0], q[1], q[2], q[3]);
+			}
+		}
 		// Set uniforms on the new body model, and attach the head to it.
 		prepareBodyForCharModel(body, matClass,
 			charModel.favoriteColor,
 			charModel.getBodyScale(),
 			pantsColorDefault);
 
+		charModel.meshes.scale.multiplyScalar(0.14 / (0.1 * (10 / 7)));
 		attachHeadToBody(body, charModel.meshes);
 		scene.add(bodyMdl); // Also adds the head model to the scene.
 
@@ -233,7 +252,6 @@ async function renderRequestToImage(renderer, ffl, matClass, request, format, si
 			camera = getWholeBodyCamera(1, charModel.charInfo.height);
 		} else { // Face only render.
 			camera = getFaceCamera();
-			camera.position.multiplyScalar((1 / 7) / 0.14);
 			adjustCameraForBodyHead(camera, body);
 		}
 
@@ -245,83 +263,83 @@ async function renderRequestToImage(renderer, ffl, matClass, request, format, si
 		});
 		renderer.setRenderTarget(rt); // Set new target.
 		// rt.viewport = new THREE.Vector4(0, 0, 200, 200);
-		renderer.setClearColor(0x000000, 0); 
+		renderer.setClearColor(0x000000, 0);
 		renderer.render(scene, camera);
 		const pixels = await renderer.readRenderTargetPixelsAsync(rt, 0, 0, rt.width, rt.height);
 		// NObody likes bmp
-let imageData; 
-const srcWidth = Math.ceil(rt.width / 64) * 64;
-const srcHeight = Math.ceil(rt.height / 64) * 64;
-const storageDir = path.resolve(import.meta.dirname, './src/storage/miis');
-const filePath = path.join(storageDir, `${name}-${mii_data}`, String(expression), `icon-${size}.${format}`);
-const folderPath = path.dirname(filePath);
-await mkdir(folderPath, { recursive: true });
+		let imageData;
+		const srcWidth = Math.ceil(rt.width / 64) * 64;
+		const srcHeight = Math.ceil(rt.height / 64) * 64;
+		const storageDir = path.resolve(import.meta.dirname, './src/storage/miis');
+		const filePath = path.join(storageDir, `${name}-${mii_data}`, String(expression), `icon-${size}.${format}`);
+		const folderPath = path.dirname(filePath);
+		await mkdir(folderPath, { recursive: true });
 
-if (format === 'png') {
-    imageData = await sharp(Buffer.from(pixels), {
-        raw: {
-            width: srcWidth,
-            height: srcHeight,
-            channels: 4
-        }
-    })
-    .resize(size, size, { fit: 'fill' })
-    .png()
-    .toBuffer();
+		if (format === 'png') {
+			imageData = await sharp(Buffer.from(pixels), {
+				raw: {
+					width: srcWidth,
+					height: srcHeight,
+					channels: 4
+				}
+			})
+				.resize(size, size, { fit: 'fill' })
+				.png()
+				.toBuffer();
 
-    await fs.writeFile(filePath, imageData);
-} else if (format === 'jpeg' || format === 'jpg') {
-    imageData = await sharp(Buffer.from(pixels), {
-        raw: {
-            width: srcWidth,
-            height: srcHeight,
-            channels: 4
-        }
-    })
-    .resize(size, size, { fit: 'fill' })
-    .flatten({ background: { r: 255, g: 255, b: 255 } })
-    .jpeg({ quality: 90, mozjpeg: true })
-    .toBuffer();
+			await fs.writeFile(filePath, imageData);
+		} else if (format === 'jpeg' || format === 'jpg') {
+			imageData = await sharp(Buffer.from(pixels), {
+				raw: {
+					width: srcWidth,
+					height: srcHeight,
+					channels: 4
+				}
+			})
+				.resize(size, size, { fit: 'fill' })
+				.flatten({ background: { r: 255, g: 255, b: 255 } })
+				.jpeg({ quality: 90, mozjpeg: true })
+				.toBuffer();
 
-    await fs.writeFile(filePath, imageData);
-} else if (format === 'tga') {
-    const resizedRawPixels = await sharp(Buffer.from(pixels), {
-        raw: {
-            width: srcWidth,
-            height: srcHeight,
-            channels: 4
-        }
-    })
-    .resize(size, size, { fit: 'fill' })
-    .raw()
-    .toBuffer();
+			await fs.writeFile(filePath, imageData);
+		} else if (format === 'tga') {
+			const resizedRawPixels = await sharp(Buffer.from(pixels), {
+				raw: {
+					width: srcWidth,
+					height: srcHeight,
+					channels: 4
+				}
+			})
+				.resize(size, size, { fit: 'fill' })
+				.raw()
+				.toBuffer();
 
-    const mutablePixels = Buffer.from(resizedRawPixels);
-    const tgaHeader = Buffer.alloc(18);
-    tgaHeader.writeUInt8(0, 0);       
-    tgaHeader.writeUInt8(0, 1);       
-    tgaHeader.writeUInt8(2, 2); 
-    tgaHeader.writeUInt16LE(size, 12);
-    tgaHeader.writeUInt16LE(size, 14);
-    tgaHeader.writeUInt8(32, 16);
-    tgaHeader.writeUInt8(40, 17); 
+			const mutablePixels = Buffer.from(resizedRawPixels);
+			const tgaHeader = Buffer.alloc(18);
+			tgaHeader.writeUInt8(0, 0);
+			tgaHeader.writeUInt8(0, 1);
+			tgaHeader.writeUInt8(2, 2);
+			tgaHeader.writeUInt16LE(size, 12);
+			tgaHeader.writeUInt16LE(size, 14);
+			tgaHeader.writeUInt8(32, 16);
+			tgaHeader.writeUInt8(40, 17);
 
-    for (let i = 0; i < mutablePixels.length; i += 4) {
-        const r = mutablePixels[i];
-        const b = mutablePixels[i + 2];
-        mutablePixels[i] = b;     
-        mutablePixels[i + 2] = r; 
-    }
+			for (let i = 0; i < mutablePixels.length; i += 4) {
+				const r = mutablePixels[i];
+				const b = mutablePixels[i + 2];
+				mutablePixels[i] = b;
+				mutablePixels[i + 2] = r;
+			}
 
-    imageData = Buffer.concat([tgaHeader, mutablePixels]);
-    await fs.writeFile(filePath, imageData);
-} else {
-	    const png = new PNG({ width: rt.width, height: rt.height });
-    png.data = Buffer.from(pixels.buffer);
-    imageData = PNG.sync.write(png); 
-}
+			imageData = Buffer.concat([tgaHeader, mutablePixels]);
+			await fs.writeFile(filePath, imageData);
+		} else {
+			const png = new PNG({ width: rt.width, height: rt.height });
+			png.data = Buffer.from(pixels.buffer);
+			imageData = PNG.sync.write(png);
+		}
 
-return imageData;
+		return imageData;
 
 	} finally {
 		charModel && charModel.dispose(); // Mii model
@@ -337,31 +355,25 @@ return imageData;
 // // ---------------------------------------------------------------------
 
 /** Entrypoint */
-async function main( mii_data, type, expression, format, size, name) {
-
-
-
-
+async function main(mii_data, type, expression, format, size, name) {
 	const width = Number.parseInt('512', 10);
 	// const height = width;
-	const isAllBody = type === 'all_body';
-
-    
+	const isAllBody = type === 'all_body' || type === 'whole_body';
 
 	// Validate inputs. Mii data is validated by rendering functions.
 	if (Number.isNaN(width) || width <= 0) {
 		console.error('Width must be a positive integer.');
-		return false
+		return false;
 	}
 
 	if (width % 64 !== 0) {
 		console.error('The resolution needs to be a multiple of 64. If it\'s not, the pixels will have this weird padding applied that doesn\'t play nice with image encoders. Examples: 128, 192, 256');
-		return false
+		return false;
 	}
 
 	if (Number.isNaN(expression) || expression < 0 || expression >= FFLExpression.MAX) {
 		console.error(`Expression must be in range: 0-${FFLExpression.MAX - 1}.`);
-		return false
+		return false;
 	}
 	const resourceFile = await fs.readFile('./FFLResHigh.dat');
 
@@ -392,16 +404,15 @@ async function main( mii_data, type, expression, format, size, name) {
 
 		// Go through all Mii data inputs.
 
+		console.info(`Rendering Mii`);
+		/** @type {IconRenderRequest} */ const request = {
+			data: parseHexOrBase64ToBytes(mii_data),
+			width, isAllBody, expression
+		};
+		let imageData = await renderRequestToImage(renderer, ffl, matClass, request, format, size, name, expression, mii_data);
 
-			console.info(`Rendering Mii`);
-			/** @type {IconRenderRequest} */ const request = {
-				data: parseHexOrBase64ToBytes(mii_data),
-				width, isAllBody, expression
-			};
-			let imageData = await renderRequestToImage(renderer, ffl, matClass, request, format, size, name, expression, mii_data);
+		return imageData;
 
-			return imageData
-		
 	} finally {
 		// Clean up.
 		(ffl) && ffl.dispose(); // Free FFL resource from WASM heap.
@@ -417,5 +428,5 @@ async function main( mii_data, type, expression, format, size, name) {
 }
 
 // eslint-disable-next-line unicorn/prefer-top-level-await -- needs lib = es2017
-export {main}
-export default {main}
+export { main };
+export default { main };
